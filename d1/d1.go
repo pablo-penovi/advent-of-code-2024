@@ -12,7 +12,7 @@ import (
 func Init(ver constants.VersionIndex) {
   lines, err := io.GetLinesFor(constants.One, ver)
   if (err != nil) {
-    panic(fmt.Sprint("Error loading file for day %d, version %d: %v", constants.One, ver, err))
+    panic(fmt.Sprintf("Error loading file for day %d, version %d: %v", constants.One, ver, err))
   }
   seq1, seq2 := parseSequences(lines)
   sort.Sort(sort.IntSlice(seq1))
