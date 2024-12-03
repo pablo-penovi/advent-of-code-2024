@@ -14,4 +14,18 @@ const (
   Eight
   Nine
   Ten
+  Eleven
+  Twelve
+  Thirteen
+  Fourteen
+  Fifteen
+  Sixteen
+  Seventeen
+  Eighteen
+  Nineteen
+  Twenty
+  TwentyOne
+  TwentyTwo
+  TwentyThree
+  TwentyFour
 )
