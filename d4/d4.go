@@ -128,8 +128,8 @@ func getP2Result(salad *Salad, aMap *map[int]struct{}) int {
     cb := count
     x := i % width
     y := i / width
-    hasSpace := i - width >= 0 && i + width < height * width && x - 1 >= 0 && x + 1 < width
-    if !hasSpace { 
+    hasSpaceAround := i - width >= 0 && i + width < height * width && x - 1 >= 0 && x + 1 < width
+    if !hasSpaceAround { 
       if isDebug { fmt.Printf("No space for A in x %d, y %d\n", x, y) }
       continue 
     }
@@ -142,8 +142,8 @@ func getP2Result(salad *Salad, aMap *map[int]struct{}) int {
       if isDebug { fmt.Printf("Match found for A in x %d, y %d\n", x, y) }
       count++
     }
-    if cb == count {
-      if isDebug { fmt.Printf("No match found for A in x %d, y %d\n", x, y) }
+    if isDebug && cb == count {
+      fmt.Printf("No match found for A in x %d, y %d\n", x, y)
     }
   }
   return count
