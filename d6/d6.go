@@ -90,7 +90,9 @@ func solvePart1(floorplan *Floorplan) int {
     x = nextX
     y = nextY
     _, wasVisited := visited[next]
-    if wasVisited { continue }
+    if wasVisited { 
+      continue 
+    }
     visited[next] = struct{}{}
   }
   return len(visited)
