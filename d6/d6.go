@@ -62,18 +62,36 @@ func Init(ver constants.VersionIndex) {
 }
 
 func solvePart1(floorplan *Floorplan) int {
-  visited := 0
+  visited := make(map[int]struct{})
   dir := North
   y := floorplan.guardPos / floorplan.width
   x := floorplan.guardPos % floorplan.width
-  for x >= 0 && x < floorplan.width && y >= 0 && y < floorplan.height {
-    if dir == North {
-      _, isObstructed := floorplan.obstructions[floorplan.guardPos - floorplan.width]
-      if isObstructed {
-        dir = dir.turnRight()
-        continue
-      }
+  visited[floorplan.guardPos] = struct{}{}
+  for true {
+    nextX := x
+    nextY := y - 1
+    if dir == East {
+      nextX = x + 1
+      nextY = y
+    } else if dir == South {
+      nextX = x
+      nextY = y + 1
+    } else if dir == West {
+      nextX = x - 1
+      nextY = y
     }
+    if nextX < 0 || nextY < 0 || nextX >= floorplan.width || nextY >= floorplan.height { break }
+    next := nextY * floorplan.width + nextX
+    _, isObstructed := floorplan.obstructions[next]
+    if isObstructed {
+      dir = dir.turnRight()
+      continue
+    }
+    x = nextX
+    y = nextY
+    _, wasVisited := visited[next]
+    if wasVisited { continue }
+    visited[next] = struct{}{}
   }
-  return visited
+  return len(visited)
 }
