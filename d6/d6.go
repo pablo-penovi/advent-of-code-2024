@@ -30,25 +30,25 @@ func (d Direction) turnRight() Direction {
 
 type Floorplan struct {
   guardPos int
-  obstructions map[int]struct{}
   width int
   height int
 }
 
-func newFloorplan(lines []string) *Floorplan {
-  floorplan := Floorplan{-1, make(map[int]struct{}), len(lines[0]), len(lines)}
+func newFloorplan(lines []string) (*Floorplan, *map[int]struct{}) {
+  floorplan := Floorplan{-1, len(lines[0]), len(lines)}
+  obstructions := make(map[int]struct{})
   for y, line := range lines {
     for x, char := range line {
       if char == '#' {
         i := y * floorplan.width + x
-        floorplan.obstructions[i] = struct{}{}
+        obstructions[i] = struct{}{}
       } else if char == '^' {
         i := y * floorplan.width + x
         floorplan.guardPos = i
       }
     }
   }
-  return &floorplan
+  return &floorplan, &obstructions
 }
 
 func Init(ver constants.VersionIndex) {
@@ -56,17 +56,43 @@ func Init(ver constants.VersionIndex) {
   if (err != nil) {
     panic(fmt.Sprintf("Error loading file for day %d, version %d: %v", constants.Six, ver, err))
   }
-  floorplan := newFloorplan(lines)
-  part1Result := solvePart1(floorplan)
+  floorplan, obstructions := newFloorplan(lines)
+  part1Result, path := solvePart1(floorplan, *obstructions)
+  part2Result := solvePart2(floorplan, *obstructions, path)
   fmt.Printf("Part 1 result: %d\n", part1Result)
+  fmt.Printf("Part 2 result: %d\n", part2Result)
 }
 
-func solvePart1(floorplan *Floorplan) int {
+func solvePart2(floorplan *Floorplan, obstructions map[int]struct{}, path *[]int) int {
+  loopCount := 0
+  usedObstructions := make(map[int]struct{})
+  var obsIn int
+  for i := 1; i < len(*path); i++ {
+    newObs := make(map[int]struct{})
+    obsIn = (*path)[i]
+    newObs[obsIn] = struct{}{}
+    _, alreadyUsed := usedObstructions[obsIn]; if alreadyUsed {
+      continue 
+    }
+    usedObstructions[obsIn] = struct{}{}
+    for obs := range obstructions {
+      newObs[obs] = struct{}{}
+    }
+    visited, _ := solvePart1(floorplan, newObs)
+    if visited == -1 {
+      loopCount++
+    }
+  }
+  return loopCount
+}
+
+func solvePart1(floorplan *Floorplan, obstructions map[int]struct{}) (int, *[]int) {
+  path := make([]int, 0)
   visited := make(map[int]struct{})
+  turnMap := make(map[string]struct{})
   dir := North
   y := floorplan.guardPos / floorplan.width
   x := floorplan.guardPos % floorplan.width
-  visited[floorplan.guardPos] = struct{}{}
   for true {
     nextX := x
     nextY := y - 1
@@ -80,20 +106,26 @@ func solvePart1(floorplan *Floorplan) int {
       nextX = x - 1
       nextY = y
     }
-    if nextX < 0 || nextY < 0 || nextX >= floorplan.width || nextY >= floorplan.height { break }
+    current := y * floorplan.width + x
     next := nextY * floorplan.width + nextX
-    _, isObstructed := floorplan.obstructions[next]
+    _, isObstructed := obstructions[next]
     if isObstructed {
+      _, hasTurnedHereBefore := turnMap[fmt.Sprintf("%d-%d", current, dir)]
+      if hasTurnedHereBefore {
+        return -1, &path
+      }
+      turnMap[fmt.Sprintf("%d-%d", current, dir)] = struct{}{}
       dir = dir.turnRight()
       continue
     }
+    path = append(path, current)
+    _, wasVisited := visited[current]
+    if !wasVisited { 
+      visited[current] = struct{}{}
+    }
+    if nextX < 0 || nextY < 0 || nextX >= floorplan.width || nextY >= floorplan.height { break }
     x = nextX
     y = nextY
-    _, wasVisited := visited[next]
-    if wasVisited { 
-      continue 
-    }
-    visited[next] = struct{}{}
   }
-  return len(visited)
+  return len(visited), &path
 }
