@@ -13,4 +13,5 @@ func Init(ver constants.VersionIndex) {
   if (err != nil) {
     panic(fmt.Sprintf("Error loading file for day %d, version %d: %v", constants.Thirteen, ver, err))
   }
+  fmt.Printf("%+v", lines)
 }
