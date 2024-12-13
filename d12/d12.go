@@ -63,7 +63,7 @@ func (l Land) isYOutOfBound(y int) bool {
   return y < 0 || y >= l.height
 }
 
-const isDebug = false
+const isDebug = true
 
 func Init(ver constants.VersionIndex) {
   lines, err := io.GetLinesFor(constants.Twelve, ver)
@@ -71,84 +71,61 @@ func Init(ver constants.VersionIndex) {
     panic(fmt.Sprintf("Error loading file for day %d, version %d: %v", constants.Twelve, ver, err))
   }
   land := getLand(lines)
-  price := solvePart1(land)
+  price := solve(land)
   fmt.Printf("Price for fences (part 1): %d\n", price)
 }
 
-func solvePart1(land *Land) int {
-  rId := 0
-  posRegion := make(PosRegion)
-  regionData := make(RegionDataMap)
+func solve(land *Land) int {
   sum := 0
+  visited := make(map[int]struct{})
   for i := range len(land.plots) {
-    reg := findRegionAround(land, i, &posRegion)
-    if reg < 0 {
-      reg = rId
-      rId++
-    }
-    posRegion[i] = reg
-    regionData.update(reg, getPerimeter(land, i))
-  }
-  for region := range regionData {
-    data, _ := regionData[region]
-    sum += data.area * data.perimeter
+    area := 0
+    perimeter := 0
+    scanRegion(land, i, &visited, &area, &perimeter)
+    sum += area * perimeter
   }
   return sum
 }
 
-func getPerimeter(land *Land, i int) int {
-  perimeter := 4
+func scanRegion(land *Land, i int, visited *map[int]struct{}, area *int, perimeter *int) {
+  _, isVisited := (*visited)[i]
+  if isVisited { return }
+  (*visited)[i] = struct{}{}
   x, y := land.iToCoord(i)
-  upY := y - 1
-  downY := y + 1
-  leftX := x - 1
-  rightX := x + 1
-  if upY >= 0 && land.plots[i] == land.plots[land.coordToI(x, upY)] {
-    perimeter--
-  }
-  if downY < land.height && land.plots[i] == land.plots[land.coordToI(x, downY)] {
-    perimeter--
-  }
-  if leftX >= 0 && land.plots[i] == land.plots[land.coordToI(leftX, y)] {
-    perimeter--
-  }
-  if rightX < land.width && land.plots[i] == land.plots[land.coordToI(rightX, y)] {
-    perimeter--
-  }
-  return perimeter
-}
-
-func findRegionAround(land *Land, i int, pr *PosRegion) int {
-  x, y := land.iToCoord(i)
+  *area += 1
+  *perimeter += 4
   upY := y - 1
   downY := y + 1
   leftX := x - 1
   rightX := x + 1
   if upY >= 0 {
     newI := land.coordToI(x, upY)
-    if land.plots[i] == land.plots[newI] && (*pr).get(newI) >= 0 {
-      return (*pr).get(newI)
+    if land.plots[i] == land.plots[newI] {
+      *perimeter--
+      scanRegion(land, newI, visited, area, perimeter)
     }
   }
   if downY < land.height {
     newI := land.coordToI(x, downY)
-    if land.plots[i] == land.plots[newI] && (*pr).get(newI) >= 0 {
-      return (*pr).get(newI)
+    if land.plots[i] == land.plots[newI] {
+      *perimeter--
+      scanRegion(land, newI, visited, area, perimeter)
     }
   }
   if leftX >= 0 {
     newI := land.coordToI(leftX, y)
-    if land.plots[i] == land.plots[newI] && (*pr).get(newI) >= 0 {
-      return (*pr).get(newI)
+    if land.plots[i] == land.plots[newI] {
+      *perimeter--
+      scanRegion(land, newI, visited, area, perimeter)
     }
   }
   if rightX < land.width {
     newI := land.coordToI(rightX, y)
-    if land.plots[i] == land.plots[newI] && (*pr).get(newI) >= 0 {
-      return (*pr).get(newI)
+    if land.plots[i] == land.plots[newI] {
+      *perimeter--
+      scanRegion(land, newI, visited, area, perimeter)
     }
   }
-  return -1
 }
 
 func getLand(lines []string) *Land {
