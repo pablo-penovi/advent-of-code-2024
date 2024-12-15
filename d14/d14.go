@@ -9,25 +9,19 @@ import (
 )
 
 const isDebug = false
-const isDebugAdd = false
-const isDebugRobot = -1
 
 type VelocityMap map[int][2]int
 type PositionMap map[string][]int
 
 func (p *PositionMap) add(id, x, y int) {
-  if isDebugAdd { fmt.Printf("Attempting to add robot %d at position x %d, y %d\n", id, x, y) }
   key := coordToKey(x, y)
   ids, exists := (*p)[key]
   if !exists {
-    if isDebugAdd { fmt.Print("Position not found in map, adding new slice\n") }
     ids = []int{id}
   } else {
-    if isDebugAdd { fmt.Print("Position found in map, adding robot ID to slice\n") }
     ids = append(ids, id)
   }
   (*p)[key] = ids
-  if isDebugAdd { fmt.Printf("New position array: %+v\n\n", ids) }
 }
 
 func (p PositionMap) get(x, y int) []int {
@@ -42,27 +36,55 @@ func Init(ver constants.VersionIndex) {
   if (err != nil) {
     panic(fmt.Sprintf("Error loading file for day %d, version %d: %v", constants.Fourteen, ver, err))
   }
-  steps := 100
   areaData := strings.Split(lines[0], ",")
   width, _ := strconv.Atoi(areaData[0])
   height, _ := strconv.Atoi(areaData[1])
+  steps := width * height
+  part1Steps := 100
   lines = lines[1:]
   vels, posits := parseInput(&lines)
-  if isDebug { 
-    fmt.Print("At start:\n")
-    render(posits, width, height) 
-  }
-  for range steps {
+  var part1 *PositionMap
+  var tree *PositionMap
+  var part2Steps int
+  for i := range steps {
     if isDebug { fmt.Print("\n\n ************** \n\n") }
     posits = move(vels, posits, width, height)
+    if i == part1Steps - 1 {
+      part1 = posits
+    }
+    // 33 was found experimenting and watching the resulting pattern
+    // Started at 40, then gradually decreased until a candidate was found
+    if hasHorizontallyAlignedRobots(posits, 33) {
+      tree = posits
+      part2Steps = i + 1
+      break
+    }
   }
-  if isDebug { 
-    fmt.Print("At end:\n")
-    render(posits, width, height) 
-  }
-  safetyFactor := computeSafetyFactor(posits, width, height)
+  safetyFactor := computeSafetyFactor(part1, width, height)
   fmt.Printf("Safety Factor (part 1): %d\n\n", safetyFactor)
-  if isDebug { fmt.Printf("Position map: %+v", posits) }
+  fmt.Printf("Tree candidate (part 2): %d seconds, visual:\n", part2Steps)
+  render(tree, width, height)
+}
+
+func hasHorizontallyAlignedRobots(posits *PositionMap, amount int) bool {
+  yCount := make(map[int]int)
+  for key := range *posits {
+    _, y := keyToCoord(key)
+    count, exists := yCount[y]
+    if exists {
+      count++
+    } else {
+      count = 1
+    }
+    yCount[y] = count
+  }
+  for key := range yCount {
+    count, _ := yCount[key]
+    if count >= amount {
+      return true
+    }
+  }
+  return false
 }
 
 func computeSafetyFactor(posits *PositionMap, width, height int) int {
@@ -106,11 +128,10 @@ func move(vels *VelocityMap, posits *PositionMap, width, height int) *PositionMa
     if isDebug { fmt.Printf("Computing moves for x %d, y %d\n", oldX, oldY) }
     ids, _ := (*posits)[key]
     for _, robotId := range ids {
-      deb := isDebug && isDebugRobot == robotId
       vels := (*vels)[robotId]
       velX := vels[0]
       velY := vels[1]
-      if deb { fmt.Printf("Computing move robot %d (pos: %d, %d | vel: %d, %d): ", robotId, oldX, oldY, velX, velY) }
+      if isDebug { fmt.Printf("Computing move robot %d (pos: %d, %d | vel: %d, %d): ", robotId, oldX, oldY, velX, velY) }
       x := oldX + velX
       y := oldY + velY
       if x >= width {
@@ -123,7 +144,7 @@ func move(vels *VelocityMap, posits *PositionMap, width, height int) *PositionMa
       } else if y < 0 {
         y = height + y
       }
-      if deb { fmt.Printf("New position %d, %d\n", x, y) }
+      if isDebug { fmt.Printf("New position %d, %d\n", x, y) }
       newPos.add(robotId, x, y)
     }
   }
