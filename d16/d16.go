@@ -125,7 +125,7 @@ type Frontier struct {
 type Result struct {
   bestScore int
   bestSeats int
-  lastNode *Node
+  lastNodes *[]*Node
 }
 
 func (f *Frontier) push(newNode *Node) {
@@ -171,7 +171,19 @@ func (f *Frontier) pop() *Node {
   return node
 }
 
-type Path []Node
+type Path []int
+
+func (p Path) toString() string {
+  st := "(" + strconv.Itoa(len(p)) + ") "
+  for i, nodeId := range p {
+    if i > 0 {
+      st += " -> "
+    }
+    st += strconv.Itoa(nodeId)
+  }
+  st += "\n"
+  return st
+}
 
 func Init(ver constants.VersionIndex) {
   lines, err := io.GetLinesFor(constants.Sixteen, ver)
@@ -181,20 +193,28 @@ func Init(ver constants.VersionIndex) {
   maze := parse(lines)
   result := solve(maze)
   fmt.Printf("\nBest Score: %d || Best seats: %d\n", result.bestScore, result.bestSeats)
-  fmt.Printf("Path: %+v\n", reconstructPath(result.lastNode))
+  paths := reconstructPath(result.lastNodes)
+  fmt.Printf("Paths:\n")
+  for _, path := range *paths {
+    fmt.Print(path.toString())
+  }
 }
 
-func reconstructPath(lastNode *Node) *[]int {
-  path := []int{lastNode.id}
-  node := lastNode.prevInRoute
-  for node != nil {
-    path = append(path, node.id)
-    node = node.prevInRoute
+func reconstructPath(lastNodes *[]*Node) *[]Path {
+  paths := make([]Path, 0)
+  for _, lastNode := range *lastNodes {
+    path := Path{lastNode.id}
+    node := lastNode.prevInRoute
+    for node != nil {
+      path = append(path, node.id)
+      node = node.prevInRoute
+    }
+    // Ignore first node since this is not counted in problem
+    path = path[:len(path)-1]
+    slices.Reverse(path)
+    paths = append(paths, path)
   }
-  // Ignore first node since this is not counted in problem
-  path = path[:len(path)-1]
-  slices.Reverse(path)
-  return &path
+  return &paths
 }
 
 func solve(maze *Maze) *Result {
@@ -211,7 +231,7 @@ func solve(maze *Maze) *Result {
   frontier.push(&Node{maze.start.id, maze.start.pos, 0, Right, nil, nil})
   seen := make(map[Coord]struct{})
   if debugToggles[RenderNodes] { clearScr(); renderPlan(maze) }
-  var lastNode *Node
+  lastNodes := []*Node{}
   node := frontier.pop()
   for node != nil {
     seen[node.pos] = struct{}{}
@@ -238,18 +258,24 @@ func solve(maze *Maze) *Result {
         log += "Not a turn. "
       }
       log += fmt.Sprintf("Score if I go this way: %d\n", scoreSoFar)
+      nodeAlreadyCreated := false
       if maze.goal.pos.equals(&newData.pos) {
         log += "\n***** GOAL!! *****\n"
         if bestScore == -1 || bestScore > scoreSoFar {
           log += fmt.Sprintf("=== NEW BEST SCORE ===\nPrevious: %d. New: %d\n", bestScore, scoreSoFar)
           bestScore = scoreSoFar
-          lastNode = &Node{newData.id, newData.pos, scoreSoFar, newDir, nil, node}
+          lastNodes = []*Node{&Node{newData.id, newData.pos, scoreSoFar, newDir, nil, node}}
+          nodeAlreadyCreated = true
+        } else if bestScore == scoreSoFar {
+          log += fmt.Sprintf("Score matches current best score. Saving last node for path reconstruction")
+          lastNodes = append(lastNodes, &Node{newData.id, newData.pos, scoreSoFar, newDir, nil, node})
+          nodeAlreadyCreated = true
         }
         log += "\n"
       }
       log += fmt.Sprintf("Pushing node %d to frontier\n", newData.id)
-      if lastNode != nil && lastNode.id == newData.id {
-        frontier.push(lastNode)
+      if nodeAlreadyCreated && lastNodes[len(lastNodes) - 1].id == newData.id {
+        frontier.push(lastNodes[len(lastNodes) - 1])
       } else {
         frontier.push(&Node{newData.id, newData.pos, scoreSoFar, newDir, nil, node})
       }
@@ -260,7 +286,7 @@ func solve(maze *Maze) *Result {
     }
     if debugToggles[DijkstraAlgo] { fmt.Print(log) }
   }
-  return &Result{bestScore, bestSeats, lastNode}
+  return &Result{bestScore, bestSeats, &lastNodes}
 }
 
 func parse(lines []string) *Maze {
