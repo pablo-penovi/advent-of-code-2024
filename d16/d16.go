@@ -20,9 +20,9 @@ const (
 )
 
 var debugToggles = map[LogToggle]bool{
-  RenderNodes: true,
+  RenderNodes: false,
   FrontierPush: false,
-  DijkstraAlgo: false,
+  DijkstraAlgo: true,
 }
 
 const isDebug = false
@@ -117,6 +117,15 @@ type Node struct {
   prevInRoute *Node
 }
 
+func (n Node) hasIdInPath(id int) bool {
+  node := n.next
+  for node != nil {
+    if n.id == id { return true }
+    node = node.next
+  }
+  return false
+}
+
 type Frontier struct {
   first *Node
   length int
@@ -125,7 +134,7 @@ type Frontier struct {
 type Result struct {
   bestScore int
   bestSeats int
-  lastNodes *[]*Node
+  lastNodes *NodePath
 }
 
 func (f *Frontier) push(newNode *Node) {
@@ -171,6 +180,16 @@ func (f *Frontier) pop() *Node {
   return node
 }
 
+func (f Frontier) toStr() string {
+  node := f.first
+  st := ""
+  for node != nil {
+    st += fmt.Sprintf("%d, ", node.id)
+    node = node.next
+  }
+  return st
+}
+
 type Path []int
 
 func (p Path) toString() string {
@@ -185,6 +204,22 @@ func (p Path) toString() string {
   return st
 }
 
+type NodePath []*Node
+type SeenMap map[string]struct{}
+
+func (sm *SeenMap) add(key string) bool {
+  _, isInMap := (*sm)[key]
+  if !isInMap {
+    (*sm)[key] = struct{}{}
+  }
+  return !isInMap
+}
+
+func (sm SeenMap) has(key string) bool {
+  _, isInMap := sm[key]
+  return isInMap
+}
+
 func Init(ver constants.VersionIndex) {
   lines, err := io.GetLinesFor(constants.Sixteen, ver)
   if (err != nil) {
@@ -192,15 +227,19 @@ func Init(ver constants.VersionIndex) {
   }
   maze := parse(lines)
   result := solve(maze)
-  fmt.Printf("\nBest Score: %d || Best seats: %d\n", result.bestScore, result.bestSeats)
   paths := reconstructPath(result.lastNodes)
   fmt.Printf("Paths:\n")
+  uniqueSeats := make(map[int]struct{})
   for _, path := range *paths {
+    for _, nodeId := range path {
+      uniqueSeats[nodeId] = struct{}{}
+    }
     fmt.Print(path.toString())
   }
+  fmt.Printf("\nBest Score: %d || Best seats: %d\n", result.bestScore, len(uniqueSeats) + 1)
 }
 
-func reconstructPath(lastNodes *[]*Node) *[]Path {
+func reconstructPath(lastNodes *NodePath) *[]Path {
   paths := make([]Path, 0)
   for _, lastNode := range *lastNodes {
     path := Path{lastNode.id}
@@ -229,12 +268,10 @@ func solve(maze *Maze) *Result {
   bestScore := -1
   frontier := Frontier{}
   frontier.push(&Node{maze.start.id, maze.start.pos, 0, Right, nil, nil})
-  seen := make(map[Coord]struct{})
   if debugToggles[RenderNodes] { clearScr(); renderPlan(maze) }
-  lastNodes := []*Node{}
+  lastNodes := NodePath{}
   node := frontier.pop()
   for node != nil {
-    seen[node.pos] = struct{}{}
     data := maze.nodes[node.pos]
     log := fmt.Sprintf("\nI'm on node %d, heading %s. Adding to seen\n", data.id, node.dir.toStr())
     for _, newDir := range directions {
@@ -244,40 +281,40 @@ func solve(maze *Maze) *Result {
         continue
       }
       newData := data.links[newDir]
-      log += fmt.Sprintf("This is node %d. ", newData.id)
-      _, wasSeen := seen[newData.pos]; if wasSeen {
-        log += "I've already seen it before, skipping\n"
-        continue
-      }
-      scoreSoFar := node.score + 1
-      isTurn := node.dir != newDir
+      newNode := Node{newData.id, newData.pos, node.score + 1, newDir, nil, node}
+      log += fmt.Sprintf("This is node %d. ", newNode.id)
+      isTurn := node.dir != newNode.dir
       if isTurn {
         log += "It's a turn. "
-        scoreSoFar += 1000
+        newNode.score += 1000
       } else {
         log += "Not a turn. "
       }
-      log += fmt.Sprintf("Score if I go this way: %d\n", scoreSoFar)
-      nodeAlreadyCreated := false
+      if bestScore > -1 && newNode.score > bestScore {
+        log += "There's a best score and the current score is greater, skipping\n"
+        continue
+      }
+      if node.hasIdInPath(newNode.id) {
+        log += "I've already seen it before, skipping\n"
+        continue
+      }
+      log += fmt.Sprintf("Score if I go this way: %d\n", newNode.score)
       if maze.goal.pos.equals(&newData.pos) {
         log += "\n***** GOAL!! *****\n"
-        if bestScore == -1 || bestScore > scoreSoFar {
-          log += fmt.Sprintf("=== NEW BEST SCORE ===\nPrevious: %d. New: %d\n", bestScore, scoreSoFar)
-          bestScore = scoreSoFar
-          lastNodes = []*Node{&Node{newData.id, newData.pos, scoreSoFar, newDir, nil, node}}
-          nodeAlreadyCreated = true
-        } else if bestScore == scoreSoFar {
-          log += fmt.Sprintf("Score matches current best score. Saving last node for path reconstruction")
-          lastNodes = append(lastNodes, &Node{newData.id, newData.pos, scoreSoFar, newDir, nil, node})
-          nodeAlreadyCreated = true
+        if bestScore == -1 || bestScore > newNode.score {
+          log += fmt.Sprintf("=== NEW BEST SCORE ===\nPrevious: %d. New: %d\n", bestScore, newNode.score)
+          bestScore = newNode.score
+          lastNodes = NodePath{&newNode}
+        } else if bestScore == newNode.score {
+          log += fmt.Sprintf("Score matches current best score. Saving last node for path reconstruction\n")
+          lastNodes = append(lastNodes, &newNode)
+        } else {
+          log += fmt.Sprintf("Goal was reached, but this path has worse score than the better found so far (%d vs %d)\n", bestScore, newNode.score)
         }
         log += "\n"
-      }
-      log += fmt.Sprintf("Pushing node %d to frontier\n", newData.id)
-      if nodeAlreadyCreated && lastNodes[len(lastNodes) - 1].id == newData.id {
-        frontier.push(lastNodes[len(lastNodes) - 1])
       } else {
-        frontier.push(&Node{newData.id, newData.pos, scoreSoFar, newDir, nil, node})
+        frontier.push(&newNode)
+        log += fmt.Sprintf("Pushing node %d to frontier. Frontier now is: %s\n", newNode.id, frontier.toStr())
       }
     }
     node = frontier.pop()
