@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -21,7 +22,7 @@ const (
 var debugToggles = map[LogToggle]bool{
   RenderNodes: true,
   FrontierPush: false,
-  DijkstraAlgo: true,
+  DijkstraAlgo: false,
 }
 
 const isDebug = false
@@ -108,15 +109,23 @@ type MazeNode struct {
 }
 
 type Node struct {
+  id int
   pos Coord
   score int
   dir Direction
   next *Node
+  prevInRoute *Node
 }
 
 type Frontier struct {
   first *Node
   length int
+}
+
+type Result struct {
+  bestScore int
+  bestSeats int
+  lastNode *Node
 }
 
 func (f *Frontier) push(newNode *Node) {
@@ -170,11 +179,25 @@ func Init(ver constants.VersionIndex) {
     panic(fmt.Sprintf("Error loading file for day %d, version %d: %v", constants.Sixteen, ver, err))
   }
   maze := parse(lines)
-  bestScore, bestSeats := solve(maze)
-  fmt.Printf("\nBest Score: %d || Best seats: %d\n", bestScore, bestSeats)
+  result := solve(maze)
+  fmt.Printf("\nBest Score: %d || Best seats: %d\n", result.bestScore, result.bestSeats)
+  fmt.Printf("Path: %+v\n", reconstructPath(result.lastNode))
 }
 
-func solve(maze *Maze) (int, int) {
+func reconstructPath(lastNode *Node) *[]int {
+  path := []int{lastNode.id}
+  node := lastNode.prevInRoute
+  for node != nil {
+    path = append(path, node.id)
+    node = node.prevInRoute
+  }
+  // Ignore first node since this is not counted in problem
+  path = path[:len(path)-1]
+  slices.Reverse(path)
+  return &path
+}
+
+func solve(maze *Maze) *Result {
   // OK here's the idea. I'll use Dijkstra to find the best path, but won't stop searching when goal is reached
   // Instead, I'll keep the score from that first path that reaches the goal (the best path)
   // Then I'll keep finding new solutions until the solution score is greater than the best score
@@ -185,9 +208,10 @@ func solve(maze *Maze) (int, int) {
   bestSeats := 0
   bestScore := -1
   frontier := Frontier{}
-  frontier.push(&Node{maze.start.pos, 0, Right, nil})
+  frontier.push(&Node{maze.start.id, maze.start.pos, 0, Right, nil, nil})
   seen := make(map[Coord]struct{})
   if debugToggles[RenderNodes] { clearScr(); renderPlan(maze) }
+  var lastNode *Node
   node := frontier.pop()
   for node != nil {
     seen[node.pos] = struct{}{}
@@ -219,13 +243,16 @@ func solve(maze *Maze) (int, int) {
         if bestScore == -1 || bestScore > scoreSoFar {
           log += fmt.Sprintf("=== NEW BEST SCORE ===\nPrevious: %d. New: %d\n", bestScore, scoreSoFar)
           bestScore = scoreSoFar
+          lastNode = &Node{newData.id, newData.pos, scoreSoFar, newDir, nil, node}
         }
         log += "\n"
-        node = nil
-        break
       }
       log += fmt.Sprintf("Pushing node %d to frontier\n", newData.id)
-      frontier.push(&Node{newData.pos, scoreSoFar, newDir, nil})
+      if lastNode != nil && lastNode.id == newData.id {
+        frontier.push(lastNode)
+      } else {
+        frontier.push(&Node{newData.id, newData.pos, scoreSoFar, newDir, nil, node})
+      }
     }
     node = frontier.pop()
     if node == nil {
@@ -233,7 +260,7 @@ func solve(maze *Maze) (int, int) {
     }
     if debugToggles[DijkstraAlgo] { fmt.Print(log) }
   }
-  return bestScore, bestSeats
+  return &Result{bestScore, bestSeats, lastNode}
 }
 
 func parse(lines []string) *Maze {
