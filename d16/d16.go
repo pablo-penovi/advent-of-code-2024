@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -53,6 +55,15 @@ func (d Direction) getNext(c *Coord) *Coord {
   return &Coord{c.x - 1, c.y}
 }
 
+func (d Direction) getOpposite() Direction {
+  if d == Up { return Down }
+  if d == Right { return Left }
+  if d == Down { return Up }
+  return Right
+}
+
+var directions = []Direction{Up, Right, Down, Left}
+
 type Coord struct {
   x int
   y int
@@ -84,30 +95,108 @@ func (c Coord) getDirTo(o *Coord) Direction {
   return Down
 }
 
-type Maze struct {
-  height int
-  width int
-  start Coord
-  goal Coord
-  walls map[Coord]struct{}
+func (c Coord) getPos(dir Direction) Coord {
+  if dir == Up {
+    return Coord{c.x, c.y - 1}
+  }
+  if dir == Right {
+    return Coord{c.x + 1, c.y}
+  }
+  if dir == Down {
+    return Coord{c.x, c.y + 1}
+  }
+  return Coord{c.x - 1, c.y}
 }
 
 type Path struct {
-  start *Node
+  nodes []PathNode
   score int
 }
 
-type Node struct {
+func (p Path) getScore() int {
+  turns := 0
+  for _, node := range p.nodes {
+    if node.isTurn { turns++ }
+  }
+  return turns * 1000 + len(p.nodes)
+}
+
+type PathNode struct {
+  nodeId int
+  isTurn bool
+}
+
+type FrontierNode struct {
+  next *FrontierNode
+  prev *FrontierNode
+  h int
+  node *MazeNode
+  isTurn bool
+  dir Direction
+  path Path
+  visited map[int]*MazeNode
+}
+
+type FrontierMap struct {
+  first *FrontierNode
+  length int
+}
+
+func (fm *FrontierMap) add(node *FrontierNode) {
+  examined := fm.first
+  if examined == nil {
+    fm.first = node
+  } else {
+    for examined != nil {
+      if examined.h > node.h {
+        if examined == fm.first {
+          node.next = fm.first
+          fm.first.prev = node
+          fm.first = node
+        } else {
+          node.prev = examined.prev
+          node.next = examined
+          examined.prev.next = node
+          examined.prev = node
+        }
+        break
+      } else if examined.next == nil {
+        examined.next = node
+        node.prev = examined
+        break
+      }
+      examined = examined.next
+    }
+  }
+  fm.length++
+}
+
+func (fm *FrontierMap) pop() *FrontierNode {
+  if fm.length == 0 { return nil }
+  node := fm.first
+  fm.first = fm.first.next
+  fm.length--
+  return node
+}
+
+func (fm *FrontierMap) clear() {
+  fm.length = 0
+  fm.first = nil
+}
+
+type Maze struct {
+  width int
+  height int
+  walls map[Coord]struct{}
+  start *MazeNode
+  goal *MazeNode
+  nodes map[Coord]*MazeNode
+}
+
+type MazeNode struct {
+  id int
   pos Coord
-  up *Node
-  right *Node
-  down *Node
-  left *Node
-}
-
-type MemoItem struct {
-  node *Node
-  score int
+  links map[Direction]*MazeNode
 }
 
 func Init(ver constants.VersionIndex) {
@@ -115,111 +204,168 @@ func Init(ver constants.VersionIndex) {
   if (err != nil) {
     panic(fmt.Sprintf("Error loading file for day %d, version %d: %v", constants.Sixteen, ver, err))
   }
-  maze := parseInput(lines)
-  bestScore := solve(maze)
-  fmt.Printf("\nBest path score: %d\n", bestScore)
+  maze := parse(lines)
+  bestScore, bestSeats := solve(maze)
+  fmt.Printf("\nBest Score: %d || Best seats: %d\n", bestScore, bestSeats)
 }
 
-func solve(maze *Maze) int {
-  currPos := maze.start
-  prevPos := Coord{-1, -1}
-  path := Path{&Node{maze.start, nil, nil, nil, nil}, 0}
-  memo := make(map[string]MemoItem)
-  memo[maze.start.toKey()] = MemoItem{path.start, 0}
-  findBestScoreToGoal(&currPos, &prevPos, Right, maze, &path, path.start, 0, &memo)
-  return path.score
-}
-
-func findBestScoreToGoal(pos *Coord, prevPos *Coord, dir Direction, maze *Maze, path *Path, current *Node, accumulator int, memo *map[string]MemoItem) {
-  if isDebug {
-    fmt.Printf("Analyzing for pos x %d, y %d. Accumulator: %d\n", pos.x, pos.y, accumulator)
-    render(maze, dir, pos)
-  }
+func solve(maze *Maze) (int, int) {
+  // OK here's the idea. I'll use Dijkstra to find the best path, but won't stop searching when goal is reached
+  // Instead, I'll keep the score from that first path that reaches the goal (the best path)
+  // Then I'll keep finding new solutions until the solution score is greater than the best score
+  // At that point I know I have exhausted all best paths (ie. all paths that share the best score)
+  // For each solution I'll keep its nodes in a set. That way when I count that set at the end, I'll
+  // get the unique nodes belonging to each best path (the best seats asked for in part 2)
+  // Sounds neat right?
+  bestSeats := 0
+  bestScore := 9223372036854775807
+  solutions := []Path{}
   
-  // End condition: Goal reached
-  if maze.goal.equals(pos) {
-    if path.score == 0 || path.score > accumulator + 1 {
-      path.score = accumulator + 1
+  clearScr()
+  renderPlan(maze)
+  node := FrontierNode{nil, nil, computeHeuristic(&maze.start.pos, &maze.goal.pos), maze.start, false, Right, Path{[]PathNode{}, 0}, make(map[int]*MazeNode)}
+  frontier := FrontierMap{&node, 1}
+  next := frontier.pop()
+ 
+  for next != nil {
+    processNode(&frontier, maze, &bestScore, &solutions, next)
+    next = frontier.pop()
+  }
+
+  fmt.Printf("\nSolutions: %d -->\n%+v\n\n", len(solutions), solutions)
+
+  return bestScore, bestSeats
+}
+
+func processNode(frontier *FrontierMap, maze *Maze, bestScore *int, solutions *[]Path, fNode *FrontierNode) {
+  fmt.Printf("Analyzing node ID %d at x %d, y %d\n", fNode.node.id, fNode.node.pos.x, fNode.node.pos.y)
+  // Check if already visited for this solution 
+  _, wasVisited := fNode.visited[fNode.node.id]; if wasVisited { fmt.Print("Node already visited\n"); return }
+
+  // Add current node to visited and path
+  fNode.visited[fNode.node.id] = fNode.node
+  fNode.path.nodes = append(fNode.path.nodes, PathNode{fNode.node.id, fNode.isTurn})
+
+  // Check if this is the goal
+  if fNode.node.id == maze.goal.id {
+    fmt.Print("\n************** Goal found! *****************\n")
+    // Get score and update bestScore and solutions if necessary
+    fNode.path.score = fNode.path.getScore()
+    if fNode.path.score < *bestScore {
+      fmt.Printf("New best score! Previous: %d | New: %d\n", *bestScore, fNode.path.score)
+      *bestScore = fNode.path.score
+      *solutions = []Path{fNode.path}
+    } else if fNode.path.score == *bestScore {
+      fmt.Print("Path matches current best score, adding to solutions\n")
+      *solutions = append(*solutions, fNode.path)
+    } else {
+      fmt.Print("This path's score is greater than current best, so no best or equally good solution exist. Exiting\n")
+      return
     }
+    fmt.Printf("Current solutions: %+v\n", *solutions)
     return
   }
-  // Get possible next positions (not previous position && not wall)
-  nextPositions := getNextPositions(pos, prevPos, maze)
-  // End condition: If no next positions, this is a dead end
-  if len(*nextPositions) == 0 { return }
 
-  for _, nextPos := range *nextPositions {
-    currNodeScore := 1; if pos.equals(&maze.start) { currNodeScore = 0 }
-    newDir := pos.getDirTo(&nextPos)
-
-    // If next node hasn't been visited before, create it and add pointer to memo
-    next, isInMemo := (*memo)[nextPos.toKey()];
-    if !isInMemo {
-      next = MemoItem{&Node{nextPos, nil, nil, nil, nil}, 0}
+  // Now we get all possible exits from this node
+  exits := []Direction{}
+  for _, dir := range directions {
+    // Count as an exit if node exists in this direction, if it was not visited, and if it is not in the direction whence we came
+    if dir != fNode.dir.getOpposite() && fNode.node.links[dir] != nil && fNode.visited[fNode.node.links[dir].id] == nil {
+      exits = append(exits, dir)
     }
+  }
+  // If node has no exits, it's a dead end
+  fmt.Printf("Possible exits: %+v\n", exits)
+  if len(exits) == 0 {
+    fmt.Print("Dead end found!\n")
+    return
+  }
+  fmt.Printf("Possible exits: %+v\n", exits)
 
-    // Now link new next node to correct direction in current node
-    if newDir == Up {
-      current.up = next.node
-    } else if newDir == Right {
-      current.right = next.node
-    } else if newDir == Down {
-      current.down = next.node
-    } else {
-      current.left = next.node
-    }
-
-    // If the reindeer turns at this point, add 1000 score to current node
-    if newDir != dir { currNodeScore += 1000 }
-
-    // If next node is new, add current score to it in memory
-    // If next node is in memory and its memory score is lower or equal than its curent score, skip
-    if isDebug { fmt.Printf("Node x%d, y %d || In memo? %v || Score before: %d || Accumulator: %d\n", next.node.pos.x, next.node.pos.y, isInMemo, next.score, accumulator + currNodeScore) }
-    if !isInMemo {
-      next.score = accumulator + currNodeScore
-      (*memo)[nextPos.toKey()] = next
-    } else if next.score <= accumulator + currNodeScore {
-      continue
-    } else {
-      next.score = accumulator + currNodeScore
-      (*memo)[nextPos.toKey()] = next
-    }
-    if isDebug { fmt.Printf("Score after: %d\n", next.score) }
-    // Finally, recurse for new node
-    findBestScoreToGoal(&nextPos, pos, newDir, maze, path, next.node, accumulator + currNodeScore, memo)
+  // If there are exits, compute if reindeer will turn to move to each of them. Also add new node to frontier
+  for _, dir := range exits {
+    isTurn := false; if dir != fNode.dir { isTurn = true }
+    heuristic := computeHeuristic(&fNode.node.links[dir].pos, &maze.goal.pos)
+    fmt.Printf("Adding %s node (x %d, y %d) to frontier. Is turn? %v. Heuristic: %d\n", dir.toStr(), fNode.node.links[dir].pos.x, fNode.node.links[dir].pos.y, isTurn, heuristic)
+    frontier.add(&FrontierNode{nil, nil, heuristic, fNode.node.links[dir], isTurn, dir, fNode.path, fNode.visited})
   }
 }
 
-func getNextPositions(pos *Coord, prevPos *Coord, maze *Maze) *[]Coord {
-  coords := make([]Coord, 0)
-  possibleDirs := []Direction{Up, Right, Down, Left}
-  for _, dir := range possibleDirs {
-    nextPos := dir.getNext(pos)
-    if nextPos.equals(prevPos) { continue }
-    _, isWall := maze.walls[*nextPos]
-    if isWall { continue }
-    coords = append(coords, *nextPos)
-  }
-  return &coords
+// My estimate will be the diff along x axis + the diff along y axis
+func computeHeuristic(pos1 *Coord, pos2 *Coord) int {
+  xDiff := pos1.x - pos2.x; if xDiff < 0 { xDiff = -xDiff }
+  yDiff := pos1.y - pos2.y; if yDiff < 0 { yDiff = -yDiff }
+  return xDiff + yDiff
 }
 
-func parseInput(lines []string) *Maze {
-  m := Maze{len(lines), len(lines[0]), Coord{-1, -1}, Coord{-1, -1}, make(map[Coord]struct{})}
+func parse(lines []string) *Maze {
+  m := Maze{len(lines[0]), len(lines), make(map[Coord]struct{}), nil, nil, make(map[Coord]*MazeNode)}
+  nodeId := 0
   for y, line := range lines {
     for x, char := range line {
-      if char == '.' { continue }
+      c := Coord{x, y}
       if char == '#' {
-        m.walls[Coord{x, y}] = struct{}{}
-      } else if char == 'S' {
-        m.start.x = x
-        m.start.y = y
+        m.walls[c] = struct{}{}
       } else {
-        m.goal.x = x
-        m.goal.y = y
+        node := MazeNode{nodeId, c, make(map[Direction]*MazeNode)}
+        nodeId++
+        for _, dir := range directions {
+          otherC := c.getPos(dir)
+          otherNode, isMapped := m.nodes[otherC]; if !isMapped { continue }
+          node.links[dir] = otherNode
+          otherNode.links[dir.getOpposite()] = &node
+        }
+        m.nodes[c] = &node
+        if char == 'S' { m.start = &node }
+        if char == 'E' { m.goal = &node }
       }
     }
   }
   return &m
+}
+
+func renderPlan(m *Maze) {
+  maxId := 0
+  for coord := range m.nodes {
+    nId := m.nodes[coord].id
+    if maxId < nId { maxId = nId }
+  }
+  cellSize := len(strconv.Itoa(maxId))
+  horLine := strings.Repeat("─", cellSize)
+  wallLine := strings.Repeat("#", cellSize)
+  horFrameTop := string(White) + "┌" + horLine + strings.Repeat("┬" + horLine, m.width - 1) + "┐" + string(Reset)
+  horFrameBetween := string(White) + "├" + horLine + strings.Repeat("┼" + horLine, m.width - 1) + "┤" + string(Reset)
+  horFrameBottom := string(White) + "└" + horLine + strings.Repeat("┴" + horLine, m.width - 1) + "┘" + string(Reset)
+  fmt.Printf("%s\n", horFrameTop)
+  for y := range m.height {
+    for x := range m.width {
+      fmt.Print(string(White) + "│" + string(Reset))
+      c := Coord{x, y}
+      node := m.nodes[c]
+      if m.start.pos.equals(&c) {
+        buf := strings.Repeat(" ", cellSize - len(strconv.Itoa(node.id)))
+        fmt.Printf("%s%s%d%s", string(Magenta), buf, node.id, string(Reset))
+        continue
+      }
+      if m.goal.pos.equals(&c) {
+        buf := strings.Repeat(" ", cellSize - len(strconv.Itoa(node.id)))
+        fmt.Printf("%s%s%d%s", string(Red), buf, node.id, string(Reset))
+        continue
+      }
+      if node == nil {
+        fmt.Print(string(White) + wallLine + string(Reset))
+        continue
+      }
+      buf := strings.Repeat(" ", cellSize - len(strconv.Itoa(node.id)))
+      fmt.Printf("%s%s%d%s", string(Green), buf, node.id, string(Reset))
+    }
+    fmt.Print(string(White) + "│" + string(Reset) + "\n")
+    if y < m.height - 1 { 
+      fmt.Print(horFrameBetween + "\n")
+    } else {
+      fmt.Print(horFrameBottom + "\n\n")
+    }
+  }
 }
 
 func render(m *Maze, dir Direction, currPos *Coord) {
@@ -231,11 +377,11 @@ func render(m *Maze, dir Direction, currPos *Coord) {
         fmt.Print(string(Magenta) + dir.toStr()[:1] + string(Reset))
         continue
       }
-      if m.start.equals(&c) {
+      if m.start.pos.equals(&c) {
         fmt.Print(string(Green) + string(Start) + string(Reset))
         continue
       }
-      if m.goal.equals(&c) {
+      if m.goal.pos.equals(&c) {
         fmt.Print(string(Red) + string(Goal) + string(Reset))
         continue
       }
