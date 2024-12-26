@@ -10,6 +10,20 @@ import (
 	"strings"
 )
 
+type LogToggle int 
+
+const (
+  RenderNodes LogToggle = iota
+  FrontierPush
+  DijkstraAlgo
+)
+
+var debugToggles = map[LogToggle]bool{
+  RenderNodes: true,
+  FrontierPush: false,
+  DijkstraAlgo: true,
+}
+
 const isDebug = false
 
 type Tile rune
@@ -93,6 +107,63 @@ type MazeNode struct {
   links map[Direction]*MazeNode
 }
 
+type Node struct {
+  pos Coord
+  score int
+  dir Direction
+  next *Node
+}
+
+type Frontier struct {
+  first *Node
+  length int
+}
+
+func (f *Frontier) push(newNode *Node) {
+  log := ""
+  if f.length == 0 {
+    log += "Frontier vacia, agrego nodo directamente\n"
+    f.first = newNode
+  } else {
+    var prev *Node
+    current := f.first
+    for current != nil {
+      log += fmt.Sprintf("Comparando nuevo nodo (x %d, y %d; score %d) con nodo actual (x %d, y %d; score %d)\n", newNode.pos.x, newNode.pos.y, newNode.score, current.pos.x, current.pos.y, current.score)
+      if newNode.score <= current.score {
+        log += "Nuevo nodo tiene score menor o igual a nodo actual\n"
+        newNode.next = current
+        if prev == nil {
+          log += "No hay prev\n"
+          f.first = newNode
+          f.length++
+          return
+        } else {
+          log += "Hay prev\n"
+          prev.next = newNode
+        }
+        break
+      }
+      log += "Voy a la siguiente\n"
+      prev = current
+      current = current.next
+    }
+    log += fmt.Sprintf("Hola, esto es prev -> %+v\n\n", prev)
+    prev.next = newNode
+  }
+  f.length++
+  if debugToggles[FrontierPush] { fmt.Print(log) }
+}
+
+func (f *Frontier) pop() *Node {
+  if f.length == 0 { return nil }
+  node := f.first
+  f.first = node.next
+  f.length--
+  return node
+}
+
+type Path []Node
+
 func Init(ver constants.VersionIndex) {
   lines, err := io.GetLinesFor(constants.Sixteen, ver)
   if (err != nil) {
@@ -112,8 +183,56 @@ func solve(maze *Maze) (int, int) {
   // get the unique nodes belonging to each best path (the best seats asked for in part 2)
   // Sounds neat right?
   bestSeats := 0
-  bestScore := 9223372036854775807
-
+  bestScore := -1
+  frontier := Frontier{}
+  frontier.push(&Node{maze.start.pos, 0, Right, nil})
+  seen := make(map[Coord]struct{})
+  if debugToggles[RenderNodes] { clearScr(); renderPlan(maze) }
+  node := frontier.pop()
+  for node != nil {
+    seen[node.pos] = struct{}{}
+    data := maze.nodes[node.pos]
+    log := fmt.Sprintf("\nI'm on node %d, heading %s. Adding to seen\n", data.id, node.dir.toStr())
+    for _, newDir := range directions {
+      log += fmt.Sprintf("Now checking %s: ", newDir.toStr())
+      if node.dir == newDir.getOpposite() || data.links[newDir] == nil {
+        log += "CAN'T\n"
+        continue
+      }
+      newData := data.links[newDir]
+      log += fmt.Sprintf("This is node %d. ", newData.id)
+      _, wasSeen := seen[newData.pos]; if wasSeen {
+        log += "I've already seen it before, skipping\n"
+        continue
+      }
+      scoreSoFar := node.score + 1
+      isTurn := node.dir != newDir
+      if isTurn {
+        log += "It's a turn. "
+        scoreSoFar += 1000
+      } else {
+        log += "Not a turn. "
+      }
+      log += fmt.Sprintf("Score if I go this way: %d\n", scoreSoFar)
+      if maze.goal.pos.equals(&newData.pos) {
+        log += "\n***** GOAL!! *****\n"
+        if bestScore == -1 || bestScore > scoreSoFar {
+          log += fmt.Sprintf("=== NEW BEST SCORE ===\nPrevious: %d. New: %d\n", bestScore, scoreSoFar)
+          bestScore = scoreSoFar
+        }
+        log += "\n"
+        node = nil
+        break
+      }
+      log += fmt.Sprintf("Pushing node %d to frontier\n", newData.id)
+      frontier.push(&Node{newData.pos, scoreSoFar, newDir, nil})
+    }
+    node = frontier.pop()
+    if node == nil {
+      log += "\nI'm all out of nodes...\n"
+    }
+    if debugToggles[DijkstraAlgo] { fmt.Print(log) }
+  }
   return bestScore, bestSeats
 }
 
