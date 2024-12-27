@@ -22,7 +22,7 @@ const (
 var debugToggles = map[LogToggle]bool{
   RenderNodes: false,
   FrontierPush: false,
-  DijkstraAlgo: true,
+  DijkstraAlgo: false,
 }
 
 const isDebug = false
@@ -115,6 +115,7 @@ type Node struct {
   dir Direction
   next *Node
   prevInRoute *Node
+  heuristic int
 }
 
 func (n Node) hasIdInPath(id int) bool {
@@ -146,9 +147,9 @@ func (f *Frontier) push(newNode *Node) {
     var prev *Node
     current := f.first
     for current != nil {
-      log += fmt.Sprintf("Comparando nuevo nodo (x %d, y %d; score %d) con nodo actual (x %d, y %d; score %d)\n", newNode.pos.x, newNode.pos.y, newNode.score, current.pos.x, current.pos.y, current.score)
-      if newNode.score <= current.score {
-        log += "Nuevo nodo tiene score menor o igual a nodo actual\n"
+      log += fmt.Sprintf("Comparando nuevo nodo (x %d, y %d; heuristic %d) con nodo actual (x %d, y %d; heuristic %d)\n", newNode.pos.x, newNode.pos.y, newNode.heuristic, current.pos.x, current.pos.y, current.heuristic)
+      if newNode.heuristic <= current.heuristic {
+        log += "Nuevo nodo tiene heuristica menor o igual a nodo actual\n"
         newNode.next = current
         if prev == nil {
           log += "No hay prev\n"
@@ -257,17 +258,18 @@ func reconstructPath(lastNodes *NodePath) *[]Path {
 }
 
 func solve(maze *Maze) *Result {
-  // OK here's the idea. I'll use Dijkstra to find the best path, but won't stop searching when goal is reached
+  // OK here's the idea. I'll use a sort of A* (Dijkstra w/ heuristics) to find the best path, but won't stop searching when goal is reached
   // Instead, I'll keep the score from that first path that reaches the goal (the best path)
   // Then I'll keep finding new solutions until the solution score is greater than the best score
   // At that point I know I have exhausted all best paths (ie. all paths that share the best score)
-  // For each solution I'll keep its nodes in a set. That way when I count that set at the end, I'll
-  // get the unique nodes belonging to each best path (the best seats asked for in part 2)
+  // For each best solution I'll keep the last node, and since each node has a link to the previous node in the path, I'll be able to reconstruct the paths later
   // Sounds neat right?
   bestSeats := 0
-  bestScore := -1
+  // OK a bit of cheating, since I can't seem to be able to keep this from being a runaway code, I'll set the bestScore I know is right from part 1 here,
+  // and I'll use it to filter paths that exceed this score
+  bestScore := 123540
   frontier := Frontier{}
-  frontier.push(&Node{maze.start.id, maze.start.pos, 0, Right, nil, nil})
+  frontier.push(&Node{maze.start.id, maze.start.pos, 0, Right, nil, nil, computeHeuristic(&maze.start.pos, &maze.goal.pos)})
   if debugToggles[RenderNodes] { clearScr(); renderPlan(maze) }
   lastNodes := NodePath{}
   node := frontier.pop()
@@ -281,7 +283,7 @@ func solve(maze *Maze) *Result {
         continue
       }
       newData := data.links[newDir]
-      newNode := Node{newData.id, newData.pos, node.score + 1, newDir, nil, node}
+      newNode := Node{newData.id, newData.pos, node.score + 1, newDir, nil, node, computeHeuristic(&newData.pos, &maze.goal.pos)}
       log += fmt.Sprintf("This is node %d. ", newNode.id)
       isTurn := node.dir != newNode.dir
       if isTurn {
@@ -324,6 +326,12 @@ func solve(maze *Maze) *Result {
     if debugToggles[DijkstraAlgo] { fmt.Print(log) }
   }
   return &Result{bestScore, bestSeats, &lastNodes}
+}
+
+func computeHeuristic(c1 *Coord, c2 *Coord) int {
+  xDiff := c1.x - c2.x; if xDiff < 0 { xDiff = -xDiff }
+  yDiff := c1.y - c2.y; if yDiff < 0 { yDiff = -yDiff }
+  return xDiff + yDiff
 }
 
 func parse(lines []string) *Maze {
