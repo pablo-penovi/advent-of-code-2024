@@ -7,6 +7,9 @@ import (
 	"math"
 	"strconv"
 	"strings"
+
+	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
 )
 
 type InstFn func(uint8)
@@ -56,7 +59,81 @@ var instructions = map[uint8]InstFn {
   },
 }
 
+func makeUI() *tview.Application {
+  app := tview.NewApplication()
+
+  // Init registers
+  regAView := tview.NewTextView()
+  regBView := tview.NewTextView()
+  regCView := tview.NewTextView()
+
+  regAView.SetChangedFunc(func() { app.Draw() })
+  regAView.SetBorder(true)
+  regAView.SetText("Register A: 0")
+  
+  regBView.SetChangedFunc(func() { app.Draw() })
+  regBView.SetBorder(true)
+  regBView.SetText("Register B: 0")
+  
+  regCView.SetChangedFunc(func() { app.Draw() })
+  regCView.SetBorder(true)
+  regCView.SetText("Register C: 0")
+
+  // Init register pane
+  registerPane := tview.NewGrid()
+  registerPane.SetBorder(false)
+  registerPane.SetColumns(0, 0, 0)
+  registerPane.SetRows(0, 0, 0)
+  registerPane.SetTitle(" REGISTERS ")
+  registerPane.SetGap(0, 3)
+  registerPane. 
+    AddItem(regAView, 0, 0, 3, 1, 0, 0, false).
+    AddItem(regBView, 0, 1, 3, 1, 0, 0, false).
+    AddItem(regCView, 0, 2, 3, 1, 0, 0, false)
+
+  // Init output
+  outputView := tview.NewTextView()
+  outputView.SetChangedFunc(func() { app.Draw() })
+  outputView.SetText("OUTPUT:")
+  outputView.SetBorder(true)
+
+  // Init status bar
+  statusBar := tview.NewTextView()
+  statusBar.SetChangedFunc(func() { app.Draw() })
+  statusBar.SetText("Idle")
+  statusBar.SetBorder(true)
+
+  // Init main view 
+  view := tview.NewGrid()
+  view.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+    switch event.Rune() {
+    case 'q':
+        app.Stop()
+    }
+    return event
+  })
+  view.SetColumns(0)
+  view.SetRows(-3, -3, -1)
+  view.SetBorder(true)
+  view.SetGap(1, 0)
+  view.SetBorderPadding(1, 1, 2, 2)
+  view. 
+    AddItem(registerPane, 0, 0, 1, 1, 0, 0, false).
+    AddItem(outputView, 1, 0, 1, 1, 0, 0, false).
+    AddItem(statusBar, 2, 0, 1, 1, 0, 0, false)
+
+  // Init app
+  app.SetRoot(view, true)
+
+  return app
+}
+
 func Init(ver constants.VersionIndex) {
+  ui := makeUI()
+  err := ui.Run()
+	if err != nil {
+		panic(err)
+	}
   lines, err := io.GetLinesFor(constants.Seventeen, ver)
   if (err != nil) {
     panic(fmt.Sprintf("Error loading file for day %d, version %d: %v", constants.Seventeen, ver, err))
@@ -68,9 +145,9 @@ func Init(ver constants.VersionIndex) {
     instructions[opcode](operand)
     pointer += 2
   }
-  fmt.Print("\nEnd state:\n\n")
-  fmt.Printf("Registers - A: %d, B: %d, C: %d\n", registers['A'], registers['B'], registers['C'])
-  fmt.Printf("Output: %s\n", output)
+  output := fmt.Sprint("\nEnd state:\n\n")
+  output += fmt.Sprintf("Registers - A: %d, B: %d, C: %d\n", registers['A'], registers['B'], registers['C'])
+  output += fmt.Sprintf("Output: %s\n", output)
 }
 
 func parseInput(lines *[]string) (*[]uint8) {
