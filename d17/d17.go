@@ -79,59 +79,77 @@ func Init(ver constants.VersionIndex) {
     panic(fmt.Sprintf("Error loading file for day %d, version %d: %v", constants.Seventeen, ver, err))
   }
   program := parseInput(&lines)
-  exploratoryMode := true
-  expMin := int(math.Pow(8, float64(len(*program))))
-  expMax := int(math.Pow(8, float64(len(*program) + 1)))
+  isPart2 := true
+  expMin := int(math.Pow(8, float64(len(*program) - 1)))
+  expMax := int(math.Pow(8, float64(len(*program))))
 
   // Part 1
-  if !exploratoryMode {
-    fixedValue, _ := registers['A']
-    expMin, expMax = fixedValue, fixedValue
+  if !isPart2 {
+    expMin, expMax = registers['A'], registers['A']
     analyze(program)
     fmt.Printf("Output: %+v\n", output)
     return
   }
 
   // Part 2
-  // First I printed the resulting output by brute force from an initial value of Register A = 0, increasing by 1 on each loop
-  // I let it run for a minute until I got to 3 or 4 digits output
-  // That output allowed me to spot a pattern related to the Reg A values at which each new digit appeared in the output
-  // Extrapolating that pattern, I came up with the min and max values for Reg A which would produce a 16-digit output (the program is a 16-digit array as well)
-  // After doing that, I let the program generate and print a small portion of those 16-digit outputs
-  // Analyzing those outputs allowed me to spot another pattern related to how long it took for the number to change initially on each output position (the five map),
-  // as well as another pattern related to how long it took the digit to change in each position after those initial numbers changed (the num change map)
-  // Armed with that knowledge, now I can instruct the program to only look for solutions within much narrower Reg A intervals,
-  // hopefully taking a gazillion years less than a brute force solution would.
-  // I should start from the end since the beginning digits are the ones that change most often
-  fiveMap := []int{
-    0, 0, 0, 0, 
-    0, 0, 0, 0,
-    0, 0, 0, 0, 
-    0, 0, 0, 0,
-  }
-  numChangeMap := []int{
-    0, 0, 0, 0,
-    0, 0, 0, 0,
-    0, 0, 0, 0,
-    0, 0, 0, 0,
-  }
-  exp := 1
-  for i := range len(fiveMap) {
-    fiveMap[i] = int(math.Pow(2, float64(exp)))
-    numChangeMap[i] = fiveMap[i] / 2
-    exp += 3
-  }
-  regAValues := []int{}
-  curPos := expMax
-  curMapPos := len(*program) - 1
-  for curPos >= expMin {
-    regAValues = append(regAValues, curPos)
-    curPos -= numChangeMap[curMapPos]
-    if curPos == fiveMap[curMapPos] {
-      curMapPos--  
+  // OK, by increasing the register A initial value by 1 on every loop during brute force exploration, I've found that this resembles a Googol machine, in that
+  // there is a fixed ratio between the number of times reg A has to increase to advance digit 0, digit 1, digit 2, etc.
+  // It all begins with digit 0. The thing is, digit 0 does not advance a number for every increase of reg A, the number varies randomly each time
+  // So the first thing I have to do is run a brute force to get the first, say, 500.000 digit 0 advancements and how many reg A numbers each advancement took
+  // What I mean is, maybe when regA is 0, digit 0 is 1. Then when regA is 1, digit 0 is 2. So that took 1 advancement of reg A
+  // But then, maybe for when regA is 2, digit 0 is 2 again, meaning there is no advancement, and only when regA is 3 does digit 0 change again. Which means the second advancement took 2 reg A numbers to occur
+
+  // So when I get the first 500.000 advancements of digit 0, I can translate those advancements to their equivalents for each digit following this formula:
+  // next advancement for digit x = digit0Advancement * 8^x
+
+  // Knowing that, I can produce outputs only for the reg A values in which each digit changes, and then only keep those outputs that match the input, and recurse for the next digit within the confines of those reg A values
+  // I start by exploring digit 15 (the last one). In case it matches the desired output, I keep that interval of reg A values that produce that desired output, and I explore digit 14
+  // within the confines of said interval. When I find digit 14 candidates, I explore digit 13 within the confines of those reg A values, and so on and so forth,
+  // allowing me to gradually home in on the solution. When I reach a candidate for digit 0, I've solved the problem
+
+  d0Changes := getFirstChanges(500.000, expMin, program)
+  result := -1
+  narrowDown(15, expMin, d0Changes, expMax, program, &result)
+  fmt.Printf("\nSolution found: %d\n", result)
+}
+
+func narrowDown(digit int, initial int, d0Changes *[]int, final int, program *[]uint8, result *int) {
+  if *result != -1 { return }
+  dMult := int(math.Pow(8, float64(digit)))
+  regA := initial
+  loopCount := 0
+  for i := range len(*d0Changes) {
+    if regA >= final { break }
+    kInput := []byte{}
+    reader.Read(kInput)
+    for _, b := range kInput {
+      if rune(b) == 'q' { break }
     }
+    newOutput(regA, program)
+    if output[digit] == (*program)[digit] {
+      fmt.Print(" [C]\n")
+      top := final; if i < len(*d0Changes) - 1 { top = regA + (*d0Changes)[i + 1] * dMult }
+      fmt.Printf("Candidate found for digit i %d: %d - %d. Exploring now\n\n", digit, regA, top)
+      if digit == 0 {
+        fmt.Printf("\n\n*** SOLVED ****\n\n")
+        *result = regA
+        break
+      }
+      narrowDown(digit - 1, regA, d0Changes, top, program, result)
+    }
+    fmt.Print("OK this was a red herring, moving on\n")
+    regA += (*d0Changes)[i + 1] * dMult
+    loopCount++
   }
-  for _, regAValue := range regAValues {
+  return
+}
+
+func getFirstChanges(limit int, expMin int, program *[]uint8) *[]int {
+  count := -1
+  d0Changes := []int{}
+  d0Value := -1
+  for i := 0; i < limit; i++ {
+    count++
     kInput := []byte{}
     reader.Read(kInput)
     for _, b := range kInput {
@@ -139,14 +157,29 @@ func Init(ver constants.VersionIndex) {
     }
     output = []uint8{}
     pointer = 0
-    registers['A'] = regAValue
+    registers['A'] = expMin + i
     registers['B'], _ = registerDefaults['B']
     registers['C'], _ = registerDefaults['C']
     analyze(program)
-    fmt.Printf("%d: %+v\n", regAValue, output)
+    if int(output[0]) != d0Value {
+      d0Value = int(output[0])
+      if count > 0 {
+        d0Changes = append(d0Changes, count)
+        count = 0
+      }
+    }
   }
-  fmt.Printf("fiveMap: %+v\n", fiveMap)
-  fmt.Printf("numChangeMap: %+v\n", numChangeMap)
+  return &d0Changes
+}
+
+func newOutput(regA int, program *[]uint8) {
+  output = Output{}
+  pointer = 0
+  registers['A'] = regA
+  registers['B'], _ = registerDefaults['B']
+  registers['C'], _ = registerDefaults['C']
+  analyze(program)
+  fmt.Printf("Output for %d: %+v", regA, output)
 }
 
 func parseInput(lines *[]string) (*[]uint8) {
