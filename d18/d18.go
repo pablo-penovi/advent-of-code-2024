@@ -12,8 +12,7 @@ import (
 )
 
 const isDebug = false
-const isRender = true
-
+const isRender = false
 
 type Color string
 
@@ -23,6 +22,7 @@ const (
   Red = "\033[31m"
   Magenta = "\033[35m"
   White = "\033[97m"
+  Blue = "\033[34m"
 )
 
 const (
@@ -104,49 +104,54 @@ func (p Path) toStr() string {
   return output
 }
 
+func (p Path) has(c *Coord) bool {
+  for _, node := range p {
+    if node.equals(c) { return true }
+  }
+  return false
+}
+
 type Memory struct {
   width int
   height int
   corrupted map[Coord]struct{}
 }
 
-func (m Memory) getHeuristic(c Coord) int {
+func (m Memory) getHeuristic(dir Direction, c Coord) int {
   xDiff := m.width - 1 - c.x; if xDiff < 0 { xDiff = -xDiff }
   yDiff := m.height - 1 - c.y; if yDiff < 0 { yDiff = -yDiff }
-  return xDiff + yDiff
+  h := xDiff + yDiff
+  if xDiff > yDiff && dir == Right || yDiff > xDiff && dir == Down {
+    h -= 1
+  } else if (xDiff > yDiff && dir == Down || dir == Up) || yDiff > xDiff && dir == Right || dir == Left {
+    h += 1
+  }
+  return h
 }
 
 type NextStep struct {
   dir Direction
   destination Coord
-  h int
+  path Path
   next *NextStep
+  prev *NextStep
 }
 
 type Frontier struct {
   first *NextStep
+  last *NextStep
   length int
 }
 
-func (f *Frontier) add(ns *NextStep) {
+func (f *Frontier) append(ns *NextStep) {
   if f.length == 0 {
     f.first = ns
-    f.length++
-    return
   }
-  s := f.first
-  for s != nil {
-    if ns.h > s.h {
-      if s.next == nil {
-        s.next = ns
-        break
-      }
-      s = s.next
-    }
-    ns.next = s.next
-    s.next = ns
-    break
+  ns.prev = f.last
+  if f.last != nil {
+    f.last.next = ns
   }
+  f.last = ns
   f.length++
 }
 
@@ -155,14 +160,20 @@ func (f *Frontier) pop() *NextStep {
     return nil
   }
   s := f.first
-  f.first = s.next
   f.length--
+  if f.length == 0 {
+    f.first = nil
+    f.last = nil
+  } else {
+    f.first = s.next
+    f.first.prev = nil
+  }
   return s
 }
 
 func newFrontier(start Coord) *Frontier {
-  f := Frontier{nil, 0}
-  f.add(&NextStep{None, start, 999_999_999_999, nil})
+  f := Frontier{nil, nil, 0}
+  f.append(&NextStep{None, start, Path{}, nil, nil})
   return &f
 }
 
@@ -174,7 +185,7 @@ func Init(ver constants.VersionIndex) {
   fallenBytes := 1024
   memory := getMemory(&lines, fallenBytes)
   path := findShortestPath(memory)
-  fmt.Printf("Shortest path: %d steps\n%s\n", len(*path) - 1, path.toStr())
+  renderPath(memory, path)
 }
 
 func findShortestPath(m *Memory) *Path {
@@ -184,29 +195,25 @@ func findShortestPath(m *Memory) *Path {
   frontier := newFrontier(start)
   seen := map[Coord]struct{}{start: {}}
   for frontier.length > 0 {
-    nextStep(frontier.pop(), Path{}, frontier, &seen, m, &end, &shortest)
+    nextStep(frontier.pop(), frontier, &seen, m, &end, &shortest)
+    if len(shortest) > 0 {
+      break
+    }
   }
   return &shortest
 }
 
-func nextStep(step *NextStep, path Path, frontier *Frontier, seen *map[Coord]struct{}, m *Memory, end *Coord, shortest *Path) {
-  // For part 1 at least, since we only need one answer, stop recursion once a shortest path has been found
-  if len(*shortest) > 0 { return }
-
+func nextStep(step *NextStep, frontier *Frontier, seen *map[Coord]struct{}, m *Memory, end *Coord, shortest *Path) {
   if isDebug { fmt.Printf("Analyzing node %s\n", step.destination.toStr()) }
-  path = append(path, step.destination)
+  step.path = append(step.path, step.destination)
+  log := fmt.Sprintf("Analyzing %s: path so far: %s\n", step.destination.toStr(), step.path.toStr())
 
-  // First exit condition: current path exceeds or matches length of shortest
-  if len(*shortest) > 0 && len(path) >= len(*shortest) {
-    if isDebug { fmt.Print("\nPath exceeds shortest found! Aborted\n") }
-    return
-  }
   // Second exit condition: Found the exit. If new path is shortest, set it to shortest variable
   if step.destination.equals(end) {
-    if isDebug { fmt.Printf("Exit found [%d steps]!\n%s\n", len(path) - 1, path.toStr()) }
-    if len(*shortest) == 0 || len(path) < len(*shortest) {
+    if isDebug { fmt.Printf("Exit found [%d steps]!\n%s\n", len(step.path) - 1, step.path.toStr()) }
+    if len(*shortest) == 0 || len(step.path) < len(*shortest) {
       if isDebug { fmt.Print("This is the new shortest path\n") }
-      *shortest = path
+      *shortest = step.path
     }
     return
   }
@@ -221,15 +228,21 @@ func nextStep(step *NextStep, path Path, frontier *Frontier, seen *map[Coord]str
     if isCorrupted { if isDebug { fmt.Print("No, the next byte is corrupted\n") }; continue }
     _, wasSeen := (*seen)[newNode]
     if wasSeen { if isDebug { fmt.Print("No, it was visited before\n") }; continue }
-    // For each valid direction we explore that path
+    // For each valid direction we add those new nodes to the back of the frontier queue
     if isDebug { fmt.Print("Yes\n") }
-    (*seen)[step.destination] = struct{}{}
-    frontier.add(&NextStep{dir, newNode, m.getHeuristic(newNode), nil})
-
-    if isRender {
-      render(m, step.destination, step.dir, frontier)
-      time.Sleep(20 * time.Millisecond)
+    (*seen)[newNode] = struct{}{}
+    newPath := make(Path, len(step.path))
+    for i := range len(step.path) {
+      newPath[i] = step.path[i]
     }
+    frontier.append(&NextStep{dir, newNode, newPath, nil, nil})
+  }
+
+  if isRender {
+    render(m, step, frontier)
+    fmt.Print(log)
+    time.Sleep(2000 * time.Millisecond)
+
   }
 }
 
@@ -255,7 +268,7 @@ func getMemory(lines *[]string, fallenBytes int) *Memory {
   return &m
 }
 
-func render(m *Memory, pos Coord, dir Direction, frontier *Frontier) {
+func render(m *Memory, step *NextStep, frontier *Frontier) {
   fMap := make(map[Coord]struct{})
   s := frontier.first
   for s != nil {
@@ -269,16 +282,41 @@ func render(m *Memory, pos Coord, dir Direction, frontier *Frontier) {
       c := Coord{x, y}
       _, isCorrupted := m.corrupted[c]
       _, isFrontier := fMap[c]
+      isPath := step.path.has(&c)
       if isCorrupted {
         if isFrontier {
           line += string(Red) + Wall + string(Reset)
         } else {
           line += string(White) + Wall + string(Reset)
         }
-      } else if c.equals(&pos) {
-        line += string(Magenta) + dir.toStr() + string(Reset)
+      } else if c.equals(&step.destination) {
+        line += string(Magenta) + step.dir.toStr() + string(Reset)
       } else {
         if isFrontier {
+          line += string(Red) + Ground + string(Reset)
+        } else if isPath {
+          line += string(Blue) + Ground + string(Reset)
+        } else {
+          line += string(Green) + Ground + string(Reset)
+        }
+      }
+    }
+    fmt.Printf("%s\n", line)
+  }
+}
+
+func renderPath(m *Memory, path *Path) {
+  clearScr()
+  for y := range m.height {
+    line := ""
+    for x := range m.width {
+      c := Coord{x, y}
+      _, isCorrupted := m.corrupted[c]
+      isPath := path.has(&c)
+      if isCorrupted {
+        line += string(White) + Wall + string(Reset)
+      } else {
+        if isPath {
           line += string(Red) + Ground + string(Reset)
         } else {
           line += string(Green) + Ground + string(Reset)
@@ -287,6 +325,7 @@ func render(m *Memory, pos Coord, dir Direction, frontier *Frontier) {
     }
     fmt.Printf("%s\n", line)
   }
+  fmt.Printf("Path: %d steps\n%s\n", len(*path) - 1, path.toStr())
 }
 
 func clearScr() {
