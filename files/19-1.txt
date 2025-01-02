@@ -1,4 +1,4 @@
-r, wr, b, g, bwu, rb, gb, br, ax, xhl, h, l
+r, wr, b, g, bwu, rb, gb, br, ax, xhl, h, l, xyz, xy, zx
 
 brwrr
 bggr
@@ -9,3 +9,5 @@ bwurrg
 brgr
 bbrgwb
 axhl
+xyzx
+axhlxyzx
