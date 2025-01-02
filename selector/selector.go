@@ -20,6 +20,7 @@ import (
   "aoc2k24/d16"
   "aoc2k24/d17"
   "aoc2k24/d18"
+  "aoc2k24/d19"
 	"fmt"
 )
 
@@ -61,6 +62,8 @@ func RunDay(day constants.DayIndex, ver constants.VersionIndex) {
       d17.Init(ver)
     case constants.Eighteen:
       d18.Init(ver)
+    case constants.Nineteen:
+      d19.Init(ver)
     default:
       panic(fmt.Sprintf("Day %d is not present", day))
   }
