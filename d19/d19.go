@@ -21,14 +21,43 @@ func Init(ver constants.VersionIndex) {
 
 func findPossible(available *map[string]struct{}, desired *[]string) int {
   count := 0
-  memo := make(map[string]int)
+  // memo := make(map[string]int)
   for _, d := range *desired {
     if isDebug { fmt.Printf("\n**** Desired pattern %s ****\n", d) }
-    res := solve(d, available, 0, 1, &memo)
+    // res := solve(d, available, 0, 1, &memo)
+    res := solveV2(d, 0, available)
     if isDebug { fmt.Printf("Matches for pattern %s: %d\n\n", d, res) }
     count += res
   }
   return count
+}
+
+func solveV2(d string, start int, a *map[string]struct{}) int {
+  count := 0
+  for aPattern := range *a {
+    if count > 0 { break }
+    end := start + len(aPattern)
+    // If this pattern doesn't fit the rest of the input, disregard
+    if end > len(d) {
+      if isDebug { fmt.Printf("Pattern length exceeds input (required length %d, actual length %d)\n", end, len(d)) }
+      continue
+    }
+    // If this pattern does not match, disregard
+    if d[start:end] != aPattern {
+      if isDebug { fmt.Printf("Pattern doesn't match! (pattern %s, input segment %s)\n", aPattern, d[start:end]) }
+      continue
+    }
+    // If the pattern matches, keep going for next input segment unless we're done
+    if isDebug { fmt.Printf("Pattern matches! (pattern %s, input segment %s)\n", aPattern, d[start:end]) }
+    if end == len(d) {
+      return 1
+    }
+    count += solveV2(d, end, a)
+  }
+
+  res := 0
+  if count > 0 { res = 1 }
+  return res
 }
 
 func solve(d string, a *map[string]struct{}, start int, end int, memo *map[string]int) int {
