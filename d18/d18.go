@@ -4,8 +4,30 @@ import (
 	"aoc2k24/constants"
 	"aoc2k24/io"
 	"fmt"
+	"os"
+	"os/exec"
 	"strconv"
 	"strings"
+	"time"
+)
+
+const isDebug = false
+const isRender = true
+
+
+type Color string
+
+const (
+  Reset Color = "\033[0m"
+  Green = "\033[32m"
+  Red = "\033[31m"
+  Magenta = "\033[35m"
+  White = "\033[97m"
+)
+
+const (
+  Wall = "▓"
+  Ground = "░"
 )
 
 type Direction int 
@@ -88,52 +110,126 @@ type Memory struct {
   corrupted map[Coord]struct{}
 }
 
+func (m Memory) getHeuristic(c Coord) int {
+  xDiff := m.width - 1 - c.x; if xDiff < 0 { xDiff = -xDiff }
+  yDiff := m.height - 1 - c.y; if yDiff < 0 { yDiff = -yDiff }
+  return xDiff + yDiff
+}
+
+type NextStep struct {
+  dir Direction
+  destination Coord
+  h int
+  next *NextStep
+}
+
+type Frontier struct {
+  first *NextStep
+  length int
+}
+
+func (f *Frontier) add(ns *NextStep) {
+  if f.length == 0 {
+    f.first = ns
+    f.length++
+    return
+  }
+  s := f.first
+  for s != nil {
+    if ns.h > s.h {
+      if s.next == nil {
+        s.next = ns
+        break
+      }
+      s = s.next
+    }
+    ns.next = s.next
+    s.next = ns
+    break
+  }
+  f.length++
+}
+
+func (f *Frontier) pop() *NextStep {
+  if f.length == 0 {
+    return nil
+  }
+  s := f.first
+  f.first = s.next
+  f.length--
+  return s
+}
+
+func newFrontier(start Coord) *Frontier {
+  f := Frontier{nil, 0}
+  f.add(&NextStep{None, start, 999_999_999_999, nil})
+  return &f
+}
+
 func Init(ver constants.VersionIndex) {
   lines, err := io.GetLinesFor(constants.Eighteen, ver)
   if (err != nil) {
     panic(fmt.Sprintf("Error loading file for day %d, version %d: %v", constants.Eighteen, ver, err))
   }
-  fallenBytes := 12
+  fallenBytes := 1024
   memory := getMemory(&lines, fallenBytes)
-  render(memory, Coord{0, 0}, None)
   path := findShortestPath(memory)
-  fmt.Printf("Shortest path: %d steps\n%s", len(*path), path.toStr())
+  fmt.Printf("Shortest path: %d steps\n%s\n", len(*path) - 1, path.toStr())
 }
 
 func findShortestPath(m *Memory) *Path {
   start := Coord{0, 0}
   end := Coord{m.width - 1, m.height - 1}
-  var shortest *Path
-  nextStep(start, None, []Coord{}, m, &end, shortest)
-  return shortest
+  shortest := Path{}
+  frontier := newFrontier(start)
+  seen := map[Coord]struct{}{start: {}}
+  for frontier.length > 0 {
+    nextStep(frontier.pop(), Path{}, frontier, &seen, m, &end, &shortest)
+  }
+  return &shortest
 }
 
-func nextStep(node Coord, prevDir Direction, path Path, m *Memory, end *Coord, shortest *Path) {
-  fmt.Printf("Analyzing node %s\n", node.toStr())
-  path = append(path, node)
+func nextStep(step *NextStep, path Path, frontier *Frontier, seen *map[Coord]struct{}, m *Memory, end *Coord, shortest *Path) {
+  // For part 1 at least, since we only need one answer, stop recursion once a shortest path has been found
+  if len(*shortest) > 0 { return }
+
+  if isDebug { fmt.Printf("Analyzing node %s\n", step.destination.toStr()) }
+  path = append(path, step.destination)
 
   // First exit condition: current path exceeds or matches length of shortest
-  if shortest != nil && len(path) >= len(*shortest) {
-    fmt.Print("Path exceeds shortest found! Aborted\n")
+  if len(*shortest) > 0 && len(path) >= len(*shortest) {
+    if isDebug { fmt.Print("\nPath exceeds shortest found! Aborted\n") }
     return
   }
   // Second exit condition: Found the exit. If new path is shortest, set it to shortest variable
-  if node.equals(end) {
-    fmt.Printf("Exit found!\n%s\n", path.toStr())
-    if shortest == nil || len(path) < len(*shortest) { fmt.Print("(is new shortest)\n"); shortest = &path }
+  if step.destination.equals(end) {
+    if isDebug { fmt.Printf("Exit found [%d steps]!\n%s\n", len(path) - 1, path.toStr()) }
+    if len(*shortest) == 0 || len(path) < len(*shortest) {
+      if isDebug { fmt.Print("This is the new shortest path\n") }
+      *shortest = path
+    }
     return
   }
-
+  
   for _, dir := range directions {
-    fmt.Printf("Exploring direction %s from %s\n", dir.toStr(), node.toStr())
-    // Skip direction conditions: It's the direction we came from, next byte is outside memory space, or next byte is corrupted
-    if dir.getOpposite() == prevDir { fmt.Print("This is the direction we came from. Aborting\n"); continue }
-    newNode := dir.getNext(&node) 
-    if newNode.isOutside(m) { fmt.Print("Going in this direction steps out of memory space. Aborting\n"); continue }
+    if isDebug { fmt.Printf("Explore direction %s from %s? ", dir.toStr(), step.destination.toStr()) }
+    // Skip direction conditions: Has already been visited, it's the direction we came from, next byte is outside memory space, or next byte is corrupted
+    if dir.getOpposite() == step.dir { if isDebug { fmt.Print("No, we came from here\n") }; continue }
+    newNode := dir.getNext(&step.destination) 
+    if newNode.isOutside(m) { if isDebug { fmt.Print("No, this steps out of memory\n") }; continue }
     _, isCorrupted := m.corrupted[newNode]
-    if isCorrupted { fmt.Print("This byte is corrupted. Aborting\n"); continue }
+    if isCorrupted { if isDebug { fmt.Print("No, the next byte is corrupted\n") }; continue }
+    _, wasSeen := (*seen)[newNode]
+    if wasSeen { if isDebug { fmt.Print("No, it was visited before\n") }; continue }
     // For each valid direction we explore that path
-    nextStep(newNode, dir, path, m, end, shortest)
+    if isDebug { fmt.Print("Yes\n") }
+    (*seen)[step.destination] = struct{}{}
+    frontier.add(&NextStep{dir, newNode, m.getHeuristic(newNode), nil})
+
+    if isRender {
+      render(m, step.destination, step.dir, frontier)
+      time.Sleep(20 * time.Millisecond)
+    }
   }
 }
 
@@ -159,20 +255,43 @@ func getMemory(lines *[]string, fallenBytes int) *Memory {
   return &m
 }
 
-func render(m *Memory, pos Coord, dir Direction) {
+func render(m *Memory, pos Coord, dir Direction, frontier *Frontier) {
+  fMap := make(map[Coord]struct{})
+  s := frontier.first
+  for s != nil {
+    fMap[s.destination] = struct{}{}
+    s = s.next
+  }
+  clearScr()
   for y := range m.height {
     line := ""
     for x := range m.width {
       c := Coord{x, y}
-      _, isCorrupted := m.corrupted[c];
+      _, isCorrupted := m.corrupted[c]
+      _, isFrontier := fMap[c]
       if isCorrupted {
-        line += "#"
+        if isFrontier {
+          line += string(Red) + Wall + string(Reset)
+        } else {
+          line += string(White) + Wall + string(Reset)
+        }
       } else if c.equals(&pos) {
-        line += dir.toStr()
+        line += string(Magenta) + dir.toStr() + string(Reset)
       } else {
-        line += "."
+        if isFrontier {
+          line += string(Red) + Ground + string(Reset)
+        } else {
+          line += string(Green) + Ground + string(Reset)
+        }
       }
     }
     fmt.Printf("%s\n", line)
   }
 }
+
+func clearScr() {
+  cmd := exec.Command("clear")
+  cmd.Stdout = os.Stdout
+  cmd.Run()
+}
+
