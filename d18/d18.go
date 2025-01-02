@@ -13,6 +13,7 @@ import (
 
 const isDebug = false
 const isRender = false
+const isPart2 = true
 
 type Color string
 
@@ -183,9 +184,32 @@ func Init(ver constants.VersionIndex) {
     panic(fmt.Sprintf("Error loading file for day %d, version %d: %v", constants.Eighteen, ver, err))
   }
   fallenBytes := 1024
-  memory := getMemory(&lines, fallenBytes)
-  path := findShortestPath(memory)
-  renderPath(memory, path)
+  if !isPart2 {
+    // Part 1
+    memory := getMemory(&lines, fallenBytes)
+    path := findShortestPath(memory)
+    renderPath(memory, path)
+  } else {
+    // Part 2
+    path := Path{}
+    tippingByte := Coord{-1, -1}
+    for {
+      memory := getMemory(&lines, fallenBytes)
+      path = *findShortestPath(memory)
+      // If there's no possible path, we've found the tipping corrupted byte
+      if len(path) == 0 { break }
+      // I keep dropping bytes until the latest dropped byte blocks the current shortest path
+      // Once that happens I start over and find a new shortest path
+      isInPath := false
+      for !isInPath {
+        fallenBytes++
+        tippingByte = parseCoord(lines[fallenBytes - 1])
+        isInPath = path.has(&tippingByte)
+      }
+      renderPath(memory, &path)
+    }
+    fmt.Printf("The first corrupted byte that blocks every possible path to the exit is %s\n", tippingByte.toStr())
+  }
 }
 
 func findShortestPath(m *Memory) *Path {
@@ -266,6 +290,13 @@ func getMemory(lines *[]string, fallenBytes int) *Memory {
   m.width++
   m.height++
   return &m
+}
+
+func parseCoord(line string) Coord {
+  coordVals := strings.Split(line, ",")
+  x, _ := strconv.Atoi(coordVals[0])
+  y, _ := strconv.Atoi(coordVals[1])
+  return Coord{x, y}
 }
 
 func render(m *Memory, step *NextStep, frontier *Frontier) {
