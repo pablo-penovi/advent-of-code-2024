@@ -31,7 +31,10 @@ func findPossible(available *map[string]struct{}, desired *[]string) int {
 
 func solve(d string, a *map[string]struct{}, start int, end int, solved *map[string]struct{}) int {
   // Check if this input has already been solved to avoid pursuing unnecesary recursion branches
-  _, isSolved := (*solved)[d]; if isSolved { return 1 }
+  _, isSolved := (*solved)[d]; if isSolved {
+    if isDebug { fmt.Printf("Input %s has already been solved, skipping rest of branch\n", d) }
+    return 1
+  }
 
   // End condition 1: End cursor reached start so everything matched
   if end == 0 {
